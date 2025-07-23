@@ -2,6 +2,10 @@
 # Work Order Matcher - Protect sensitive data and generated files
 
 # ===== SENSITIVE CREDENTIALS (NEVER COMMIT) =====
+# Quick Book API keys
+MJM Special WO QuickBook API Key.txt
+
+
 # Environment variables with API keys
 .env
 .env.local
