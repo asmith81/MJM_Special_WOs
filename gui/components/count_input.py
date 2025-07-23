@@ -112,14 +112,19 @@ class CountInputWidget:
                 pass
     
     def get_count(self) -> int:
-        """Get current count value"""
+        """Get current count value with robust error handling"""
         try:
-            value = self.count_var.get().strip()
+            value = self.count_var.get()
+            if not value or not isinstance(value, str):
+                return 5  # Default if empty or wrong type
+            
+            value = value.strip()
             if not value:
-                return 5  # Default if empty
+                return 5  # Default if empty after strip
+                
             count = int(value)
             return max(1, min(99, count))  # Clamp to reasonable range
-        except ValueError:
+        except (ValueError, AttributeError, TypeError):
             return 5  # Default if invalid
     
     def set_count(self, count: int):

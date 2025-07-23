@@ -5,64 +5,104 @@ Provides clean interface to Google Sheets data with WorkOrder objects
 """
 
 from typing import List, Optional
+import time
 from auth.google_auth import GoogleAuth
 from data.data_models import WorkOrder
+from utils.logging_config import get_logger
+from utils.config import Config
 import pandas as pd
+
+logger = get_logger('sheets_client')
 
 
 class SheetsClient:
     """Clean interface to Google Sheets data"""
     
     def __init__(self):
-        """Initialize with Google authentication"""
+        """Initialize with Google authentication and logging"""
+        logger.debug("Initializing SheetsClient")
         self.auth = GoogleAuth()
         self._authenticated = False
+        logger.debug("SheetsClient initialized")
     
     def authenticate(self) -> bool:
-        """Authenticate with Google Sheets"""
+        """Authenticate with Google Sheets with enhanced logging"""
         try:
+            logger.info("Starting Google Sheets authentication")
+            start_time = time.time()
+            
             self.auth.authenticate()
             self._authenticated = True
+            
+            auth_duration = time.time() - start_time
+            logger.info(f"✅ Google Sheets authentication successful in {auth_duration:.2f}s")
+            
             return True
         except Exception as e:
-            print(f"❌ Google Sheets authentication failed: {e}")
+            logger.error(f"❌ Google Sheets authentication failed: {e}")
             self._authenticated = False
             return False
     
     def test_connection(self) -> bool:
-        """Test connection to Google Sheets"""
+        """Test connection to Google Sheets with logging"""
         try:
             if not self._authenticated:
+                logger.warning("Cannot test connection - not authenticated")
                 return False
-            return self.auth.test_connection()
+            
+            logger.info("Testing Google Sheets connection")
+            result = self.auth.test_connection()
+            
+            if result:
+                logger.info("✅ Google Sheets connection test passed")
+            else:
+                logger.error("❌ Google Sheets connection test failed")
+            
+            return result
         except Exception as e:
-            print(f"❌ Connection test failed: {e}")
+            logger.error(f"❌ Connection test failed: {e}")
             return False
     
     def load_all_work_orders(self) -> List[WorkOrder]:
-        """Load all work orders from Google Sheets"""
+        """Load all work orders from Google Sheets with enhanced logging and error handling"""
         try:
             if not self._authenticated:
                 raise Exception("Not authenticated - call authenticate() first")
             
+            logger.info("Loading work orders from Google Sheets")
+            start_time = time.time()
+            
             # Get raw data from auth client
             raw_data = self.auth.load_work_orders()
+            data_load_duration = time.time() - start_time
             
             # Convert to WorkOrder objects
             work_orders = []
-            for row in raw_data:
+            skipped_count = 0
+            conversion_start = time.time()
+            
+            for i, row in enumerate(raw_data):
                 try:
                     wo = WorkOrder.from_sheets_row(row)
                     work_orders.append(wo)
                 except Exception as e:
                     # Skip malformed rows but continue processing
-                    print(f"⚠️ Skipping malformed work order row: {e}")
+                    skipped_count += 1
+                    logger.warning(f"Skipping malformed work order row {i+1}: {e}")
                     continue
+            
+            conversion_duration = time.time() - conversion_start
+            total_duration = time.time() - start_time
+            
+            logger.info(f"✅ Loaded {len(work_orders)} work orders ({skipped_count} skipped) in {total_duration:.2f}s")
+            
+            if Config.ENABLE_PERFORMANCE_LOGGING:
+                logger.info(f"Work orders loading performance - Data: {data_load_duration:.2f}s, Conversion: {conversion_duration:.2f}s")
             
             return work_orders
             
         except Exception as e:
-            print(f"❌ Failed to load work orders: {e}")
+            logger.error(f"❌ Failed to load work orders: {e}")
             return []
     
     def load_alpha_numeric_work_orders(self) -> List[WorkOrder]:

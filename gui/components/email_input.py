@@ -102,8 +102,14 @@ class EmailInputWidget:
         self.char_count_label.config(foreground=color)
     
     def get_text(self) -> str:
-        """Get current text content"""
-        return self.text_area.get("1.0", tk.END).strip()
+        """Get current text content with error handling"""
+        try:
+            text = self.text_area.get("1.0", tk.END)
+            if text and isinstance(text, str):
+                return text.strip()
+            return ""
+        except (tk.TclError, AttributeError, TypeError):
+            return ""
     
     def set_text(self, text: str):
         """Set text content"""

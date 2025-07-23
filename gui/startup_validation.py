@@ -12,44 +12,86 @@ import os
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Initialize logging for startup validation with better error handling
+logger = None
+try:
+    from utils.config import initialize_logging
+    initialize_logging()
+    from utils.logging_config import get_logger
+    logger = get_logger('startup_validation')
+except ImportError as e:
+    # Missing dependencies
+    print(f"Warning: Missing dependencies for logging: {e}")
+    print("Install with: pip install -r requirements.txt")
+except Exception as e:
+    # Other logging initialization failures
+    print(f"Warning: Could not initialize logging: {e}")
+    print("Continuing with console output only")
+
 
 def validate_configuration():
-    """Validate environment configuration with helpful error dialogs"""
-    print("🔧 Validating configuration...")
+    """Validate environment configuration with enhanced validation and logging"""
+    if logger:
+        logger.info("🔧 Starting configuration validation...")
+    else:
+        print("🔧 Validating configuration...")
     
     try:
-        from utils.config import validate_config, get_config_summary
+        from utils.config import validate_config, get_config_summary, get_validation_details
         
-        # Validate configuration
-        errors = validate_config()
-        if errors:
+        # Get detailed validation results
+        validation_details = get_validation_details()
+        
+        if validation_details['has_errors']:
             error_msg = "Configuration errors found:\n\n"
-            for error in errors:
+            for error in validation_details['errors']:
                 error_msg += f"• {error}\n"
             
             error_msg += "\n" + _get_configuration_help()
             
+            if logger:
+                logger.error(f"Configuration validation failed: {len(validation_details['errors'])} errors")
+                for error in validation_details['errors']:
+                    logger.error(f"  - {error}")
+            
             messagebox.showerror("Configuration Error", error_msg)
             return False
         
+        # Log warnings if any
+        if validation_details['has_warnings']:
+            if logger:
+                logger.warning(f"Configuration warnings found: {len(validation_details['warnings'])}")
+                for warning in validation_details['warnings']:
+                    logger.warning(f"  - {warning}")
+        
         # Show config summary for confirmation
         summary = get_config_summary()
-        print(f"✅ Configuration valid!")
-        print(f"   Anthropic configured: {summary['anthropic_configured']}")
-        print(f"   Google Sheet ID: {summary['google_sheet_id']}")
+        
+        if logger:
+            logger.info("✅ Configuration validation successful!")
+            logger.info(f"   Anthropic configured: {summary['anthropic_configured']}")
+            logger.info(f"   OAuth credentials: {'Environment' if summary['oauth_credentials_provided'] else 'Hardcoded'}")
+            logger.info(f"   Google Sheet ID: {summary['google_sheet_id']}")
+            logger.info(f"   Claude Model: {summary['claude_model']}")
+            logger.info(f"   Log Level: {summary['log_level']}")
+        else:
+            print("✅ Configuration valid!")
+            print(f"   Anthropic configured: {summary['anthropic_configured']}")
+            print(f"   Google Sheet ID: {summary['google_sheet_id']}")
         
         return True
         
     except ImportError as e:
-        messagebox.showerror(
-            "Import Error",
-            f"Failed to import configuration modules:\n{str(e)}\n\n"
-            "Please ensure all dependencies are installed:\n"
-            "pip install -r requirements.txt"
-        )
+        error_msg = f"Failed to import configuration modules:\n{str(e)}\n\nPlease ensure all dependencies are installed:\npip install -r requirements.txt"
+        if logger:
+            logger.error(f"Import error during configuration validation: {str(e)}")
+        messagebox.showerror("Import Error", error_msg)
         return False
     except Exception as e:
-        messagebox.showerror("Configuration Error", f"Configuration validation failed:\n{str(e)}")
+        error_msg = f"Configuration validation failed:\n{str(e)}"
+        if logger:
+            logger.error(f"Configuration validation exception: {str(e)}")
+        messagebox.showerror("Configuration Error", error_msg)
         return False
 
 

@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox
 import threading
 import sys
 import os
+import time
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,22 +20,42 @@ from gui.components.results_display import ResultsDisplayWidget
 from data.sheets_client import SheetsClient
 from llm.anthropic_client import AnthropicClient
 from data.data_models import MatchingResult, WorkOrder
+from utils.logging_config import get_logger
+from utils.thread_manager import get_thread_manager
+from utils.config import Config
+
+logger = get_logger('main_window')
 
 
 class WorkOrderMatcherApp:
     """Main application window for Work Order Matcher"""
     
     def __init__(self, root):
-        """Initialize the main application"""
+        """Initialize the main application with enhanced logging and thread management"""
+        logger.info("Initializing Work Order Matcher main window")
+        
         self.root = root
         self.root.title("Work Order Matcher - AI-Powered Billing Analysis")
-        self.root.geometry("1400x900")
-        self.root.minsize(1200, 700)
+        
+        # Use configuration-based window sizing
+        geometry = f"{Config.DEFAULT_WINDOW_WIDTH}x{Config.DEFAULT_WINDOW_HEIGHT}"
+        self.root.geometry(geometry)
+        self.root.minsize(Config.MIN_WINDOW_WIDTH, Config.MIN_WINDOW_HEIGHT)
+        
+        logger.debug(f"Window configured: {geometry}, min size: {Config.MIN_WINDOW_WIDTH}x{Config.MIN_WINDOW_HEIGHT}")
         
         # Initialize clients
         self.sheets_client = SheetsClient()
         self.anthropic_client = AnthropicClient()
         self.work_orders = []
+        
+        # Initialize thread manager with error handling
+        try:
+            self.thread_manager = get_thread_manager()
+        except Exception as e:
+            logger.error(f"Could not initialize thread manager: {e}")
+            # Create a fallback that just runs tasks synchronously
+            self.thread_manager = None
         
         # GUI components
         self.email_input = None
@@ -49,8 +70,13 @@ class WorkOrderMatcherApp:
         # Set up GUI
         self._setup_gui()
         
+        # Start periodic task processing
+        self._start_task_processor()
+        
         # Load work orders in background
         self._load_work_orders_async()
+        
+        logger.info("Main window initialization complete")
     
     def _setup_gui(self):
         """Set up the main GUI layout"""
@@ -255,34 +281,70 @@ class WorkOrderMatcherApp:
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self._show_about)
     
-    def _load_work_orders_async(self):
-        """Load work orders in background thread"""
-        def load_work_orders():
+    def _start_task_processor(self):
+        """Start periodic processing of completed tasks"""
+        def process_tasks():
             try:
-                self._update_status("Connecting to Google Sheets...")
-                
-                # Authenticate and load work orders
-                if not self.sheets_client.authenticate():
-                    self._update_status("❌ Google Sheets authentication failed", "red")
-                    self._update_system_status("❌ Authentication failed", "red")
-                    return
-                
-                self._update_status("Loading work orders...")
-                self.work_orders = self.sheets_client.load_alpha_numeric_work_orders()
-                
-                # Update UI on main thread
-                self.root.after(0, self._on_work_orders_loaded)
-                
+                if self.thread_manager:
+                    processed = self.thread_manager.process_completed_tasks()
+                    if processed > 0:
+                        logger.debug(f"Processed {processed} completed tasks")
             except Exception as e:
-                self.root.after(0, lambda: self._on_work_orders_error(str(e)))
+                logger.error(f"Error processing completed tasks: {str(e)}")
+            finally:
+                # Schedule next processing cycle
+                self.root.after(100, process_tasks)  # Check every 100ms
         
-        # Start background thread
-        thread = threading.Thread(target=load_work_orders, daemon=True)
-        thread.start()
+        # Start the processing cycle only if thread manager is available
+        if self.thread_manager:
+            self.root.after(100, process_tasks)
+
+    def _load_work_orders_async(self):
+        """Load work orders in background using thread manager"""
+        def load_work_orders():
+            logger.info("Starting work orders loading task")
+            self._update_status("Connecting to Google Sheets...")
+            
+            # Authenticate and load work orders
+            if not self.sheets_client.authenticate():
+                logger.error("Google Sheets authentication failed")
+                raise Exception("Google Sheets authentication failed")
+            
+            self._update_status("Loading work orders...")
+            work_orders = self.sheets_client.load_alpha_numeric_work_orders()
+            logger.info(f"Successfully loaded {len(work_orders)} work orders")
+            return work_orders
+        
+        # Submit task to thread manager or run synchronously if unavailable
+        if self.thread_manager:
+            success = self.thread_manager.submit_task(
+                task_id="load_work_orders",
+                func=load_work_orders,
+                on_success=self._on_work_orders_loaded,
+                on_error=self._on_work_orders_error,
+                on_complete=lambda task: logger.debug(f"Work orders loading task completed in {task.duration:.2f}s")
+            )
+            
+            if not success:
+                logger.error("Failed to submit work orders loading task")
+                self._update_status("❌ Failed to start work orders loading", "red")
+                self._update_system_status("❌ System error", "red")
+        else:
+            # Fallback: run synchronously
+            logger.warning("Thread manager not available, running work orders loading synchronously")
+            try:
+                work_orders = load_work_orders()
+                self._on_work_orders_loaded(work_orders)
+            except Exception as e:
+                self._on_work_orders_error(e)
     
-    def _on_work_orders_loaded(self):
+    def _on_work_orders_loaded(self, work_orders):
         """Handle successful work orders loading"""
-        count = len(self.work_orders)
+        self.work_orders = work_orders
+        count = len(work_orders)
+        
+        logger.info(f"Work orders loaded successfully: {count} alpha-numeric work orders")
+        
         self._update_wo_count(f"Work Orders: {count} alpha-numeric loaded")
         self._update_status(f"✅ Ready - {count} work orders available", "green")
         self._update_system_status("✅ System ready", "green")
@@ -292,8 +354,11 @@ class WorkOrderMatcherApp:
     
     def _on_work_orders_error(self, error):
         """Handle work orders loading error"""
+        error_msg = str(error) if hasattr(error, '__str__') else str(error)
+        logger.error(f"Work orders loading failed: {error_msg}")
+        
         self._update_wo_count("Work Orders: Error loading")
-        self._update_status(f"❌ Error loading work orders: {error}", "red")
+        self._update_status(f"❌ Error loading work orders: {error_msg}", "red")
         self._update_system_status("❌ System error", "red")
         
         # Keep button disabled
@@ -321,41 +386,63 @@ class WorkOrderMatcherApp:
         self._start_matching_async(email_text, expected_count)
     
     def _start_matching_async(self, email_text, expected_count):
-        """Start matching process in background thread"""
+        """Start matching process using thread manager with input sanitization"""
         def run_matching():
-            try:
-                # Update UI
-                self.root.after(0, self._on_matching_started)
-                
-                # Run matching - convert WorkOrder objects to dict format
-                work_orders_dict = []
-                for wo in self.work_orders:
-                    wo_dict = {
-                        'WO #': wo.wo_id,
-                        'Total': wo.total,
-                        'Location': wo.location,
-                        'Description': wo.description
-                    }
-                    work_orders_dict.append(wo_dict)
-                
-                result = self.anthropic_client.find_matches(
-                    email_text=email_text,
-                    work_orders=work_orders_dict,
-                    expected_count=expected_count
-                )
-                
-                # Convert to MatchingResult object
-                matching_result = MatchingResult.from_api_response(result, self.work_orders)
-                
-                # Update UI on main thread
-                self.root.after(0, lambda: self._on_matching_completed(matching_result))
-                
-            except Exception as e:
-                self.root.after(0, lambda: self._on_matching_error(str(e)))
+            logger.info(f"Starting matching analysis with {len(self.work_orders)} work orders, expecting {expected_count} matches")
+            
+            # Convert WorkOrder objects to dict format for API
+            work_orders_dict = []
+            for wo in self.work_orders:
+                wo_dict = {
+                    'WO #': wo.wo_id,
+                    'Total': wo.total,
+                    'Location': wo.location,
+                    'Description': wo.description
+                }
+                work_orders_dict.append(wo_dict)
+            
+            # Call Anthropic client (which now handles input sanitization internally)
+            result = self.anthropic_client.find_matches(
+                email_text=email_text,
+                work_orders=work_orders_dict,
+                expected_count=expected_count
+            )
+            
+            logger.debug(f"API response received: success={result.get('success', False)}")
+            
+            # Convert to MatchingResult object
+            matching_result = MatchingResult.from_api_response(result, self.work_orders)
+            
+            return matching_result
         
-        # Start background thread
-        thread = threading.Thread(target=run_matching, daemon=True)
-        thread.start()
+        # Submit task to thread manager or run synchronously if unavailable
+        if self.thread_manager:
+            success = self.thread_manager.submit_task(
+                task_id="matching_analysis", 
+                func=run_matching,
+                on_success=self._on_matching_completed,
+                on_error=self._on_matching_error,
+                on_complete=lambda task: self._on_matching_finished()
+            )
+            
+            if success:
+                self._on_matching_started()
+            else:
+                logger.error("Failed to submit matching task")
+                self._update_status("❌ Failed to start matching analysis", "red")
+                messagebox.showerror("System Error", "Could not start matching analysis. Thread manager at capacity.")
+                return
+        else:
+            # Fallback: run synchronously (will block UI but still work)
+            logger.warning("Thread manager not available, running matching synchronously (UI may freeze)")
+            self._on_matching_started()
+            try:
+                result = run_matching()
+                self._on_matching_completed(result)
+            except Exception as e:
+                self._on_matching_error(e)
+            finally:
+                self._on_matching_finished()
     
     def _on_matching_started(self):
         """Handle matching process start"""
@@ -367,10 +454,7 @@ class WorkOrderMatcherApp:
     
     def _on_matching_completed(self, result: MatchingResult):
         """Handle successful matching completion"""
-        self.matching_in_progress = False
-        self.find_matches_button.config(state="normal", text="🔍 Find Matches")
-        self.progress_bar.stop()
-        self.progress_bar.grid_remove()  # Hide progress bar
+        logger.info(f"Matching completed successfully: {result.total_match_count} matches, {result.unmatched_count} unmatched")
         
         if result.success:
             # Display results
@@ -383,18 +467,26 @@ class WorkOrderMatcherApp:
             self._update_status(status_msg, "green")
             
         else:
+            logger.error(f"Analysis failed: {result.error}")
             self._update_status(f"❌ Analysis failed: {result.error}", "red")
             messagebox.showerror("Analysis Failed", f"Matching analysis failed:\n\n{result.error}")
     
     def _on_matching_error(self, error):
         """Handle matching process error"""
+        error_msg = str(error) if hasattr(error, '__str__') else str(error)
+        logger.error(f"Matching analysis error: {error_msg}")
+        
+        self._update_status(f"❌ Error during analysis: {error_msg}", "red")
+        messagebox.showerror("Analysis Error", f"An error occurred during analysis:\n\n{error_msg}")
+    
+    def _on_matching_finished(self):
+        """Handle matching process completion (success or error)"""
+        logger.debug("Matching process finished, updating UI state")
+        
         self.matching_in_progress = False
         self.find_matches_button.config(state="normal", text="🔍 Find Matches")
         self.progress_bar.stop()
-        self.progress_bar.grid_remove()
-        
-        self._update_status(f"❌ Error during analysis: {error}", "red")
-        messagebox.showerror("Analysis Error", f"An error occurred during analysis:\n\n{error}")
+        self.progress_bar.grid_remove()  # Hide progress bar
     
     def _load_sample_email(self):
         """Load sample email text"""

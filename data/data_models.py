@@ -32,10 +32,16 @@ class WorkOrder:
     def get_clean_amount(self) -> float:
         """Extract numeric amount from total string"""
         try:
+            if not self.total or not isinstance(self.total, str):
+                return 0.0
+            
             # Remove currency symbols and commas
-            clean_total = re.sub(r'[^\d.-]', '', self.total)
-            return float(clean_total) if clean_total else 0.0
-        except (ValueError, TypeError):
+            clean_total = re.sub(r'[^\d.-]', '', str(self.total).strip())
+            if not clean_total or clean_total in ['-', '.']:
+                return 0.0
+            
+            return float(clean_total)
+        except (ValueError, TypeError, AttributeError):
             return 0.0
     
     def is_alpha_numeric(self) -> bool:
@@ -179,34 +185,64 @@ class MatchingResult:
         matches = []
         for match_data in api_result.get('matches', []):
             try:
+                # Validate match_data structure
+                if not isinstance(match_data, dict):
+                    continue
+                
+                # Build evidence with type checking
+                evidence_data = match_data.get('evidence', {})
+                if not isinstance(evidence_data, dict):
+                    evidence_data = {}
+                
                 evidence = MatchEvidence(
-                    primary_signals=match_data.get('evidence', {}).get('primary_signals', []),
-                    supporting_signals=match_data.get('evidence', {}).get('supporting_signals', []),
-                    score_breakdown=match_data.get('evidence', {}).get('score_breakdown', ''),
-                    concerns=match_data.get('evidence', {}).get('concerns', [])
+                    primary_signals=evidence_data.get('primary_signals', []) if isinstance(evidence_data.get('primary_signals'), list) else [],
+                    supporting_signals=evidence_data.get('supporting_signals', []) if isinstance(evidence_data.get('supporting_signals'), list) else [],
+                    score_breakdown=str(evidence_data.get('score_breakdown', '')),
+                    concerns=evidence_data.get('concerns', []) if isinstance(evidence_data.get('concerns'), list) else []
                 )
                 
+                # Build amount comparison with type checking
                 amount_comp_data = match_data.get('amount_comparison', {})
+                if not isinstance(amount_comp_data, dict):
+                    amount_comp_data = {}
+                
+                def safe_float(value, default=0.0):
+                    try:
+                        return float(value) if value is not None else default
+                    except (ValueError, TypeError):
+                        return default
+                
                 amount_comparison = AmountComparison(
-                    email_amount=float(amount_comp_data.get('email_amount', 0)),
-                    wo_amount=float(amount_comp_data.get('wo_amount', 0)), 
-                    difference=float(amount_comp_data.get('difference', 0))
+                    email_amount=safe_float(amount_comp_data.get('email_amount')),
+                    wo_amount=safe_float(amount_comp_data.get('wo_amount')), 
+                    difference=safe_float(amount_comp_data.get('difference'))
                 )
                 
-                wo_id = match_data.get('work_order_id', '').replace('WO#', '')  # Clean WO# prefix
+                # Clean work order ID
+                wo_id_raw = match_data.get('work_order_id', '')
+                wo_id = str(wo_id_raw).replace('WO#', '').strip() if wo_id_raw else ''
+                
+                # Validate confidence score
+                confidence_raw = match_data.get('confidence', 0)
+                try:
+                    confidence = int(float(confidence_raw))
+                    confidence = max(0, min(100, confidence))  # Clamp to 0-100
+                except (ValueError, TypeError):
+                    confidence = 0
                 
                 match = Match(
-                    email_item=match_data.get('email_item', ''),
+                    email_item=str(match_data.get('email_item', '')),
                     work_order_id=wo_id,
-                    confidence=int(match_data.get('confidence', 0)),
+                    confidence=confidence,
                     evidence=evidence,
                     amount_comparison=amount_comparison,
                     work_order=wo_lookup.get(wo_id)
                 )
                 matches.append(match)
                 
-            except (ValueError, TypeError, KeyError) as e:
-                # Skip malformed matches but don't fail entire result
+            except Exception as e:
+                # Skip malformed matches but log the issue if logging is available
+                # Don't fail entire result
                 continue
         
         return cls(
