@@ -360,7 +360,7 @@ wo_matcher/
 - 90%+ user satisfaction in initial testing
 
 ### 13.2 Qualitative Metrics
-- Users report significant time savings vs manual matching
+- Users report significant time savings vs manual matching 
 - Middle management gains actionable insights into job profitability
 - Owner receives cost data to support pricing decisions
 - Improved visibility leads to better profit margin management
