@@ -3,13 +3,14 @@
 ## 1. Executive Summary
 
 ### 1.1 Product Overview
-The Work Order Matcher is a desktop application that helps general contractors automatically match email billing descriptions to Google Sheets work order entries using AI-powered analysis. The tool addresses profit margin visibility issues by connecting subcontractor invoices with client billing amounts.
+The Work Order Matcher is a desktop application that helps general contractors automatically match email billing descriptions to Google Sheets work order entries using AI-powered analysis, and now includes complete invoice automation through QuickBooks Online integration. The tool addresses profit margin visibility issues by connecting subcontractor invoices with client billing amounts and automates the entire invoice creation and documentation workflow.
 
 ### 1.2 Business Problem
 - General contractor works with "special" clients under separate contracts
 - Owner sends billing emails with job descriptions and amounts to charge clients
 - Middle management lacks visibility into profit margins on these jobs
 - Manual matching of email descriptions to work order data is time-intensive and error-prone
+- Manual QuickBooks invoice creation and PDF processing creates additional administrative overhead
 - Significant money being lost due to owner billing clients at discounts without cost visibility
 
 ### 1.3 Success Metrics
@@ -17,6 +18,8 @@ The Work Order Matcher is a desktop application that helps general contractors a
 - Achieve 80%+ accuracy in automatic work order matching
 - Provide clear profit/loss visibility for special client jobs
 - Enable proactive cost analysis before client billing decisions
+- Automate invoice creation and PDF documentation workflow
+- Eliminate manual QuickBooks data entry for matched work orders
 
 ## 2. Product Goals
 
@@ -361,3 +364,233 @@ wo_matcher/
 - Middle management gains actionable insights into job profitability
 - Owner receives cost data to support pricing decisions
 - Improved visibility leads to better profit margin management
+
+## 14. QuickBooks Integration & Invoice Automation
+
+### 14.1 Overview
+Extended functionality that takes the work order matching results and creates a complete invoice automation pipeline from match acceptance through final PDF documentation in Google Drive.
+
+### 14.2 Business Context
+- Special work orders only go to approximately 3 regular clients
+- Current manual QuickBooks invoice creation is time-intensive
+- PDF documentation and Google Drive storage is currently manual
+- Invoice tracking in Google Sheets requires manual link updates
+
+### 14.3 Enhanced Workflow
+1. **Existing**: Email paste → LLM matching → Match suggestions
+2. **New**: User accepts matches → Stage for invoicing  
+3. **New**: Batch staged items → Create QB invoice via API
+4. **New**: User reviews/approves in QB interface → User saves invoice as PDF within QB
+5. **New**: Manual "Process Invoice PDF" button → File picker → Google Drive upload → Sheet update with link
+
+### 14.4 New Functional Requirements
+
+#### 14.4.1 Match Staging System
+- Accept/reject individual match suggestions from LLM analysis
+- Stage accepted matches for batch invoice creation
+- Session-based staging (no persistent storage required)
+- Support batching multiple work orders into single invoice
+- Clear staging after successful invoice processing
+
+#### 14.4.2 Client Management
+- Simple dictionary-based client configuration
+- Store basic client information: name, QuickBooks customer ID, email
+- Support for ~3 regular clients (no GUI configuration needed)
+- Integration with QuickBooks customer records
+
+#### 14.4.3 QuickBooks Online Integration
+- API authentication using python-quickbooks library
+- Sandbox environment for development and testing
+- Customer creation/management via API
+- Invoice creation with line items from staged work orders
+- Standard invoice format (no custom templates required)
+
+#### 14.4.4 PDF Processing Workflow
+- Manual "Process Invoice PDF" button after QB invoice creation
+- File picker dialog for PDF selection (no automatic file monitoring)
+- Support for PDFs saved from QuickBooks interface
+- Upload to Google Drive with organized folder structure
+- Generate shareable links for Google Sheets updates
+
+#### 14.4.5 Google Drive Integration
+- Expand existing Google authentication to include Drive API scopes
+- Upload invoice PDFs to designated Drive folders
+- Generate shareable links for easy access
+- Maintain file organization by client/date (optional)
+
+#### 14.4.6 Google Sheets Updates
+- Update work order rows with invoice PDF links
+- Mark processed work orders with completion status
+- Track invoice creation dates and QB invoice numbers
+- Maintain audit trail of processed items
+
+### 14.5 Technical Architecture Extensions
+
+#### 14.5.1 New Modules
+```
+quickbooks/
+├── __init__.py
+├── qb_client.py          # QB API wrapper using python-quickbooks
+├── invoice_builder.py    # Convert staged matches to QB invoice format
+└── customer_manager.py   # Handle client dictionary management
+
+staging/
+├── __init__.py
+├── match_staging.py      # Session-based staging of accepted matches
+└── invoice_session.py    # Batch management for invoice creation
+
+drive/
+├── __init__.py
+├── drive_client.py       # PDF upload and link generation
+└── pdf_processor.py      # File picker and processing workflow
+```
+
+#### 14.5.2 Authentication Extensions
+- Expand Google OAuth2 scopes to include Drive API access
+- QuickBooks OAuth2 integration for API access
+- Sandbox credentials for development
+- Production credential management
+
+#### 14.5.3 Updated Google Scopes
+```python
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',     # Existing
+    'https://www.googleapis.com/auth/drive.file'        # New for PDF upload
+]
+```
+
+### 14.6 User Interface Extensions
+
+#### 14.6.1 Match Review Interface
+- Accept/reject buttons for each LLM match suggestion
+- Staging area showing accepted matches
+- Batch processing controls for invoice creation
+- Clear staging functionality
+
+#### 14.6.2 Invoice Processing Panel
+```
+┌─ Invoice Processing ─────────────┐
+│ Staged Items: 5 work orders      │
+│ Client: ABC Construction         │
+│                                  │
+│ [Create QB Invoice]              │
+│                                  │
+│ ✅ Invoice #12345 created in QB  │
+│ [Process Invoice PDF]            │
+└──────────────────────────────────┘
+```
+
+#### 14.6.3 Progress Tracking
+- Visual indicators for workflow stages
+- Success/error messaging for each step
+- Processing status updates during API calls
+
+### 14.7 Implementation Phases
+
+#### 14.7.1 Phase 1: Basic QB Integration (Week 1)
+- QuickBooks authentication and sandbox setup
+- Basic customer creation via API
+- Simple invoice creation from staged matches
+- Client dictionary configuration
+
+#### 14.7.2 Phase 2: Staging & Workflow (Week 2)  
+- Match acceptance/staging interface
+- Batch invoice creation functionality
+- Enhanced error handling and user feedback
+- End-to-end invoice creation workflow
+
+#### 14.7.3 Phase 3: PDF & Drive Integration (Week 3)
+- Google Drive authentication expansion
+- File picker for PDF selection
+- Drive upload and link generation
+- Google Sheets update with PDF links
+
+#### 14.7.4 Phase 4: Testing & Polish (Week 4)
+- End-to-end workflow testing
+- Error handling refinement
+- User experience optimization
+- Production readiness validation
+
+### 14.8 Configuration Requirements
+
+#### 14.8.1 Client Configuration
+```python
+CLIENTS = {
+    "client_1": {
+        "name": "ABC Construction", 
+        "qb_customer_id": "123",
+        "email": "billing@abc.com"
+    },
+    "client_2": {
+        "name": "XYZ Development",
+        "qb_customer_id": "456", 
+        "email": "accounting@xyz.com"
+    },
+    "client_3": {
+        "name": "DEF Properties",
+        "qb_customer_id": "789",
+        "email": "invoices@def.com"
+    }
+}
+```
+
+#### 14.8.2 QuickBooks Configuration
+- Sandbox app credentials for development
+- Production app credentials for deployment
+- API endpoint configurations
+- Customer ID mappings
+
+#### 14.8.3 Google Drive Configuration
+- Target folder IDs for PDF storage
+- File naming conventions
+- Sharing permissions for generated links
+
+### 14.9 Data Flow Integration
+
+#### 14.9.1 Extended Data Pipeline
+```
+Email Input → LLM Matching → User Review → Match Staging → 
+QB Invoice Creation → User PDF Save → PDF Processing → 
+Drive Upload → Sheets Update → Workflow Complete
+```
+
+#### 14.9.2 State Management
+- Session-based staging with cleanup after processing
+- Error recovery at each workflow stage
+- Rollback capabilities for failed operations
+- Audit logging for troubleshooting
+
+### 14.10 Security Considerations
+
+#### 14.10.1 API Security
+- OAuth2 for both Google and QuickBooks APIs
+- Secure token storage and refresh handling
+- Sandbox isolation for development
+- Production credential separation
+
+#### 14.10.2 Data Handling
+- No persistent storage of sensitive invoice data
+- Local-only processing of financial information
+- Secure file handling during PDF processing
+- Proper cleanup of temporary files
+
+### 14.11 Success Criteria for QB Integration
+
+#### 14.11.1 Functional Success
+- [ ] Users can accept/reject match suggestions and stage for invoicing
+- [ ] Staged matches successfully create QuickBooks invoices via API
+- [ ] PDF processing workflow handles user-selected files correctly
+- [ ] Google Drive upload and link generation works reliably
+- [ ] Google Sheets updates with PDF links automatically
+
+#### 14.11.2 Performance Success
+- [ ] Invoice creation completes within 60 seconds
+- [ ] PDF upload and processing under 30 seconds
+- [ ] End-to-end workflow from staging to documentation under 5 minutes
+- [ ] Error recovery handles common failure scenarios
+
+#### 14.11.3 Business Success
+- [ ] Eliminates manual QuickBooks invoice data entry
+- [ ] Reduces PDF documentation time by 80%+
+- [ ] Provides complete audit trail from email to final invoice
+- [ ] Maintains accuracy while improving efficiency
